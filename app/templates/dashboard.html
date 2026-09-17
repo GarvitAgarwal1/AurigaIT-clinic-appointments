@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Staff Desk | Clinic Desk</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header><a href="/" class="brand">Clinic Desk</a><button id="logout" class="secondary">Log out</button></header>
+<main class="desk">
+  <section id="auth-panel" class="auth-layout"><div class="auth-intro"><p class="eyebrow">STAFF ACCESS</p><h1>Welcome back.</h1><p>Sign in to manage today's appointments, patients, and doctor schedules.</p></div><div class="panel auth-card"><h2>Log in</h2><p id="login-message" class="form-message" role="alert"></p><form id="login-form"><label>Username<input name="username" autocomplete="username" required minlength="3"></label><label>Password<span class="password-field"><input name="password" type="password" autocomplete="current-password" required minlength="8"><button type="button" class="password-toggle" data-password-toggle aria-label="Show login password" title="Show password">Show</button></span></label><button>Log in</button></form><div class="register-box"><h3>New to Clinic Desk?</h3><p>Create a front-desk account to get started.</p><p id="register-message" class="form-message" role="alert"></p><form id="register-form"><label>Username<input name="username" autocomplete="username" required minlength="3"></label><label>Password<span class="password-field"><input name="password" type="password" autocomplete="new-password" required minlength="8"><button type="button" class="password-toggle" data-password-toggle aria-label="Show registration password" title="Show password">Show</button></span></label><button class="secondary">Create account</button></form></div></div></section>
+  <section id="desk-panel" hidden>
+    <div class="toolbar"><h1>Today's desk</h1><button id="refresh" class="secondary">Refresh</button></div>
+    <section class="clock-bar"><strong>Simulated clock</strong><input id="clock-time" type="datetime-local"><button id="set-clock" class="small">Advance clock</button><span id="clock-message"></span></section>
+    <div id="welcome-card" class="welcome-card">
+      <div>
+        <p class="eyebrow">FIRST-TIME GUIDE</p>
+        <h2>Quick start</h2>
+      </div>
+      <ul>
+        <li>Select a doctor and patient to book.</li>
+        <li>Use patient search to find a record quickly.</li>
+        <li>Cancel from the doctor's day view to see the fee update.</li>
+      </ul>
+      <button id="dismiss-welcome" class="small secondary" type="button">Dismiss</button>
+    </div>
+    <p id="notice"></p>
+    <div class="columns">
+      <section class="panel"><h2>Book appointment</h2><form id="booking-form"><label>Doctor<select name="doctor_id" id="doctor-select" required></select></label><label>Patient<select name="patient_id" id="patient-select" required></select></label><label>Start<input name="starts_at" type="datetime-local" required></label><label>End<input name="ends_at" type="datetime-local" required></label><label>Notes<textarea name="notes"></textarea></label><button>Book</button></form></section>
+      <section class="panel"><h2>Patient search</h2><form id="search-form" class="inline"><input name="search" placeholder="Patient name"><button>Search</button></form><div id="patient-results"></div></section>
+      <section class="panel"><h2>Doctor's day</h2><form id="day-form" class="inline"><select id="day-doctor" required></select><input id="day-date" type="date" required><button>View</button></form><div id="schedule"></div></section>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+async function api(path, options={}) { const response=await fetch(path,{headers:{'Content-Type':'application/json'},...options}); const data=await response.json().catch(()=>({})); if(!response.ok) throw Error(data.detail||'Request failed'); return data; }
+function formData(form) { return Object.fromEntries(new FormData(form)); }
+function show(text, error=false) { $('notice').textContent=text; $('notice').className=error?'error':''; }
+function appointmentRow(a) {
+  const fee = a.status === 'cancelled' ? ` · fee $${Number(a.cancellation_fee || 0).toFixed(2)}` : '';
+  const cancelAction = a.status === 'booked' ? ` <button data-cancel="${a.id}" class="small secondary">Cancel</button>` : '';
+  return `<p data-appointment-row="${a.id}"><strong>${new Date(a.starts_at).toLocaleString()}</strong> - ${new Date(a.ends_at).toLocaleTimeString()} · patient #${a.patient_id} · ${a.status}${fee}${cancelAction}</p>`;
+}
+async function loadPeople() {
+  const doctors=await api('/api/doctors');
+  const patients=await api('/api/patients');
+  for(const id of ['doctor-select','day-doctor']) $(id).innerHTML=doctors.items.map(d=>`<option value="${d.id}">${d.name} (${d.specialty})</option>`).join('');
+  $('patient-select').innerHTML=patients.items.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+}
+async function loadPatients(event) {
+  if(event) event.preventDefault();
+  const data=await api('/api/patients?search='+encodeURIComponent(new FormData($('search-form')).get('search')));
+  $('patient-results').innerHTML=data.items.length?data.items.map(p=>`<p><strong>${p.name}</strong><br>${p.phone||'No phone'} · ${p.email||'No email'}<br>Cancellation amount: $${Number(p.cancellation_amount||0).toFixed(2)}</p>`).join(''):'<p>No patients found.</p>';
+}
+async function loadDay(event) {
+  if(event) event.preventDefault();
+  const data=await api(`/api/appointments/day/${$('day-doctor').value}?day=${$('day-date').value}`);
+  $('schedule').innerHTML=data.length?data.map(appointmentRow).join(''):'<p>No appointments.</p>';
+}
+async function refreshDashboard() {
+  await loadPeople();
+  await loadPatients({ preventDefault() {} });
+  await loadDay({ preventDefault() {} });
+}
+async function start() {
+  try {
+    await api('/api/doctors');
+    $('auth-panel').hidden=true;
+    $('desk-panel').hidden=false;
+    $('day-date').value=new Date().toISOString().slice(0,10);
+    const dismissed = localStorage.getItem('clinicDeskWelcomeDismissed') === 'true';
+    $('welcome-card').hidden = dismissed;
+    await refreshDashboard();
+  } catch(e) {}
+}
+$('login-form').onsubmit=async e=>{e.preventDefault();$('login-message').textContent='';try{await api('/api/auth/login',{method:'POST',body:JSON.stringify(formData(e.target))});await start();}catch(err){$('login-message').textContent=err.message;}};
+$('register-form').onsubmit=async e=>{e.preventDefault();$('register-message').textContent='';try{await api('/api/auth/register',{method:'POST',body:JSON.stringify(formData(e.target))});$('register-message').textContent='Account created. Log in above.';}catch(err){$('register-message').textContent=err.message;}};
+document.querySelectorAll('[data-password-toggle]').forEach(toggle=>toggle.onclick=()=>{const input=toggle.parentElement.querySelector('input');const visible=input.type==='text';input.type=visible?'password':'text';toggle.textContent=visible?'Show':'Hide';toggle.setAttribute('aria-label',`${visible?'Show':'Hide'} ${input.autocomplete==='new-password'?'registration':'login'} password`);toggle.title=visible?'Show password':'Hide password';});
+$('booking-form').onsubmit=async e=>{
+  e.preventDefault();
+  try {
+    const payload={...formData(e.target), doctor_id:+e.target.doctor_id.value, patient_id:+e.target.patient_id.value};
+    await api('/api/appointments',{method:'POST',body:JSON.stringify(payload)});
+    show('Appointment booked.');
+    e.target.reset();
+    await refreshDashboard();
+  } catch(err){show(err.message,true);}
+};
+ $('search-form').onsubmit=loadPatients; $('day-form').onsubmit=loadDay; $('refresh').onclick=refreshDashboard; $('logout').onclick=async()=>{await api('/api/auth/logout',{method:'POST'});location.reload();};
+$('set-clock').onclick=async()=>{try{const value=$('clock-time').value;if(!value) throw Error('Choose a simulated date and time first');const result=await api('/api/clock',{method:'POST',body:JSON.stringify({current_time:new Date(value).toISOString()})});$('clock-message').textContent=`Current time: ${new Date(result.current_time).toLocaleString()}`;await refreshDashboard();}catch(err){$('clock-message').textContent=err.message;}};
+$('dismiss-welcome').onclick=()=>{localStorage.setItem('clinicDeskWelcomeDismissed','true'); $('welcome-card').hidden=true;};
+document.addEventListener('click',async e=>{if(e.target.dataset.cancel){try{const a=await api(`/api/appointments/${e.target.dataset.cancel}/cancel`,{method:'POST'});show(`Cancelled. Fee: $${a.cancellation_fee}`);const row=e.target.closest('[data-appointment-row]'); if(row){ row.outerHTML = appointmentRow(a); } else { await refreshDashboard(); }}catch(err){show(err.message,true);}}});
+start();
+</script></body></html>
