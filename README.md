@@ -12,6 +12,8 @@ python -m venv .venv
 
 Open `http://127.0.0.1:8000/`, register a staff account, then log in at the staff desk. The SQLite file `clinic.db` is created automatically. API documentation is available at `/docs`.
 
+Each account is provisioned once with exactly four doctors and six demo patients. The provisioning marker is stored on the user, so application restarts do not duplicate or regenerate records. Doctors, patients, appointments, and outbox notifications all carry the owning `user_id`; every authenticated read and write filters by that ID. The session signing key is generated on process start, so all browser sessions must log in again after an application restart.
+
 ## Test
 
 Run the isolated test suite inside the project virtual environment:
@@ -49,7 +51,7 @@ This treats touching slots such as 10:00-10:30 and 10:30-11:00 as valid, but rej
 
 ## Cancellation rule
 
-Cancellation is free when it happens at least two hours before the appointment start. A cancellation less than two hours before the start costs `$25.00`. The rule is implemented in one service function and stored on the appointment as `cancellation_fee`; cancelling twice does not charge twice.
+Cancellation is free when it happens at least two hours before the appointment start. A cancellation less than two hours before the start but before the appointment begins costs `$25.00`. Cancelling once the appointment has started costs `$1.00`. The rule is implemented in one service function and stored on the appointment as `cancellation_fee`; cancelling twice does not charge twice.
 
 ## REST API
 
@@ -75,39 +77,33 @@ All paths below except authentication require the signed login session cookie.
 | GET | `/api/appointments/{appointment_id}` | Get one appointment |
 | PATCH | `/api/appointments/{appointment_id}` | Edit notes or safely reschedule |
 | POST | `/api/appointments/{appointment_id}/cancel` | Cancel and calculate fee |
+| POST | `/api/appointments/{appointment_id}/complete` | Mark a booked appointment completed so it is not auto-marked no-show |
 | DELETE | `/api/appointments/{appointment_id}` | Permanently delete an appointment |
 | GET | `/api/appointments/day/{doctor_id}?day=YYYY-MM-DD` | Full doctor's day, sorted by start time |
-| PATCH | `/api/appointments/{appointment_id}/reschedule` | Change start/end safely while keeping doctor and patient |
-| POST | `/api/clock` or `/clock` | Set the simulated absolute current time; generates reminders and sweeps no-shows |
+| PATCH | `/api/appointments/{appointment_id}/reschedule` or `/appointments/{appointment_id}/reschedule` | Change start/end safely while keeping doctor and patient |
+| POST | `/api/notifications/run` | Run today's notification service immediately |
+| POST | `/api/appointments/cleanup` | Remove booked appointments 30 minutes after their start |
 | GET | `/api/outbox` or `/outbox` | Return all generated reminder notifications |
 
 List endpoints accept `page` and `size` (bounded to 100, or 200 for a day schedule). Doctor and appointment lists also accept sorting parameters as documented by their API behavior.
 
-## New simulated-time features
+## Automatic notifications and cleanup
 
-`POST /api/clock` (also available as `POST /clock`) accepts an absolute timestamp and never a duration:
+The app runs a background job every minute using real UTC time. The notification service finds booked appointments scheduled for today and queues one message per patient in the outbox. `POST /api/notifications/run` runs the same job immediately for testing, and `GET /api/outbox` shows the generated messages. A production SMS/email provider can consume the outbox rows.
 
-```json
-{"current_time": "2030-01-02T09:15:00Z"}
-```
+The cleanup job deletes booked appointments once they are at least 30 minutes past their start time. Cancelled and completed appointments are retained. `POST /api/appointments/cleanup` runs cleanup immediately for testing.
 
-The response is:
+`PATCH /api/appointments/{appointment_id}/reschedule` accepts an optional requested time and duration:
 
 ```json
-{"current_time": "2030-01-02T09:15:00", "message": "Clock advanced; reminders generated and no-shows swept"}
+{"starts_at": "2030-01-02T10:00:00Z", "ends_at": "2030-01-02T10:30:00Z", "duration_minutes": 30}
 ```
 
-The simulated clock cannot move backwards. When it crosses into a calendar day, one outbox reminder is generated per patient with an appointment on each crossed day. Every clock request also marks a still-`booked` appointment as `no_show` once simulated time reaches 30 minutes after its start. Cancelled and completed appointments are skipped.
-
-`PATCH /api/appointments/{appointment_id}/reschedule` accepts:
-
-```json
-{"starts_at": "2030-01-02T10:00:00Z", "ends_at": "2030-01-02T10:30:00Z"}
-```
-
-It returns the updated appointment. The doctor and patient IDs remain unchanged, and an overlapping booking for that doctor returns `409` without changing the original appointment.
+It returns the updated appointment. The doctor and patient IDs remain unchanged. If the requested time conflicts, the service automatically moves the appointment to the next free slot after the conflicting patient's end time. Omitting the times reschedules from the current UTC time using `duration_minutes`.
 
 Patient list/search results include `phone` and the patient's aggregated `cancellation_amount`.
+
+The dashboard keeps the original booking, doctor-day, and patient-search forms and adds a separate **New patient booking** form. It creates the patient under the logged-in account and then books an appointment for that patient.
 
 ## Manual proof checklist
 

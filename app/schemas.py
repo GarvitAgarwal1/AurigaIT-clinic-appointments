@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class UserIn(BaseModel):
     username: str = Field(min_length=3, max_length=80)
     password: str = Field(min_length=8, max_length=128)
+    remember_me: bool = False
 
 
 class DoctorIn(BaseModel):
@@ -34,8 +35,9 @@ class AppointmentUpdate(BaseModel):
 
 
 class RescheduleIn(BaseModel):
-    starts_at: datetime
-    ends_at: datetime
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    duration_minutes: int = Field(default=30, ge=5, le=480)
 
 
 class ClockIn(BaseModel):

@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .database import Base
+from .database import Base, utc_now
 
 
 class User(Base):
@@ -13,12 +13,15 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(256))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    demo_seeded: Mapped[bool] = mapped_column(Boolean, default=False)
+    remember_token: Mapped[str] = mapped_column(String(128), unique=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
 
 
 class Doctor(Base):
     __tablename__ = "doctors"
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(120), index=True)
     specialty: Mapped[str] = mapped_column(String(120), default="General practice")
     appointments: Mapped[list["Appointment"]] = relationship(back_populates="doctor")
@@ -27,6 +30,7 @@ class Doctor(Base):
 class Patient(Base):
     __tablename__ = "patients"
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(120), index=True)
     phone: Mapped[str] = mapped_column(String(40), default="")
     email: Mapped[str] = mapped_column(String(160), default="")
@@ -36,6 +40,7 @@ class Patient(Base):
 class Appointment(Base):
     __tablename__ = "appointments"
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     doctor_id: Mapped[int] = mapped_column(ForeignKey("doctors.id"), index=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
     starts_at: Mapped[datetime] = mapped_column(DateTime, index=True)
@@ -43,14 +48,15 @@ class Appointment(Base):
     status: Mapped[str] = mapped_column(String(20), default="booked", index=True)
     cancellation_fee: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"))
     notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     doctor: Mapped[Doctor] = relationship(back_populates="appointments")
     patient: Mapped[Patient] = relationship(back_populates="appointments")
 
 
 class ClockState(Base):
     __tablename__ = "clock_state"
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
     current_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
@@ -58,8 +64,9 @@ class OutboxNotification(Base):
     __tablename__ = "outbox_notifications"
     __table_args__ = (UniqueConstraint("patient_id", "appointment_date", name="uq_patient_appointment_reminder"),)
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
     appointment_date: Mapped[datetime] = mapped_column(DateTime, index=True)
     message: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     patient: Mapped[Patient] = relationship()

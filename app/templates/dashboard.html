@@ -7,7 +7,6 @@
   <section id="auth-panel" class="auth-layout"><div class="auth-intro"><p class="eyebrow">STAFF ACCESS</p><h1>Welcome back.</h1><p>Sign in to manage today's appointments, patients, and doctor schedules.</p></div><div class="panel auth-card"><h2>Log in</h2><p id="login-message" class="form-message" role="alert"></p><form id="login-form"><label>Username<input name="username" autocomplete="username" required minlength="3"></label><label>Password<span class="password-field"><input name="password" type="password" autocomplete="current-password" required minlength="8"><button type="button" class="password-toggle" data-password-toggle aria-label="Show login password" title="Show password">Show</button></span></label><button>Log in</button></form><div class="register-box"><h3>New to Clinic Desk?</h3><p>Create a front-desk account to get started.</p><p id="register-message" class="form-message" role="alert"></p><form id="register-form"><label>Username<input name="username" autocomplete="username" required minlength="3"></label><label>Password<span class="password-field"><input name="password" type="password" autocomplete="new-password" required minlength="8"><button type="button" class="password-toggle" data-password-toggle aria-label="Show registration password" title="Show password">Show</button></span></label><button class="secondary">Create account</button></form></div></div></section>
   <section id="desk-panel" hidden>
     <div class="toolbar"><h1>Today's desk</h1><button id="refresh" class="secondary">Refresh</button></div>
-    <section class="clock-bar"><strong>Simulated clock</strong><input id="clock-time" type="datetime-local"><button id="set-clock" class="small">Advance clock</button><span id="clock-message"></span></section>
     <div id="welcome-card" class="welcome-card">
       <div>
         <p class="eyebrow">FIRST-TIME GUIDE</p>
@@ -20,9 +19,10 @@
       </ul>
       <button id="dismiss-welcome" class="small secondary" type="button">Dismiss</button>
     </div>
+    <section class="panel notification-panel"><div class="section-heading"><div><p class="eyebrow">NOTIFICATIONS</p><h2>Today's patient reminders</h2></div><button id="refresh-notifications" class="small secondary" type="button">Refresh</button></div><div id="notifications"><p>No notifications yet.</p></div></section>
     <p id="notice"></p>
     <div class="columns">
-      <section class="panel"><h2>Book appointment</h2><form id="booking-form"><label>Doctor<select name="doctor_id" id="doctor-select" required></select></label><label>Patient<select name="patient_id" id="patient-select" required></select></label><label>Start<input name="starts_at" type="datetime-local" required></label><label>End<input name="ends_at" type="datetime-local" required></label><label>Notes<textarea name="notes"></textarea></label><button>Book</button></form></section>
+      <section class="panel"><h2>Book appointment</h2><form id="booking-form"><label>Doctor<select name="doctor_id" id="doctor-select" required></select></label><label>Patient<select name="patient_id" id="patient-select" required></select></label><label>Start<input name="starts_at" type="datetime-local" required></label><label>End<input name="ends_at" type="datetime-local" required></label><label>Notes<textarea name="notes"></textarea></label><button>Book</button></form><hr><h3>New patient booking</h3><form id="new-patient-booking-form"><label>Patient name<input name="name" required></label><label>Phone<input name="phone" required></label><label>Email<input name="email" type="email"></label><label>Doctor<select name="doctor_id" class="doctor-options" required></select></label><label>Start<input name="starts_at" type="datetime-local" required></label><label>End<input name="ends_at" type="datetime-local" required></label><button class="secondary">Create patient and book</button></form></section>
       <section class="panel"><h2>Patient search</h2><form id="search-form" class="inline"><input name="search" placeholder="Patient name"><button>Search</button></form><div id="patient-results"></div></section>
       <section class="panel"><h2>Doctor's day</h2><form id="day-form" class="inline"><select id="day-doctor" required></select><input id="day-date" type="date" required><button>View</button></form><div id="schedule"></div></section>
     </div>
@@ -30,24 +30,30 @@
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-async function api(path, options={}) { const response=await fetch(path,{headers:{'Content-Type':'application/json'},...options}); const data=await response.json().catch(()=>({})); if(!response.ok) throw Error(data.detail||'Request failed'); return data; }
+document.getElementById('login-form').insertAdjacentHTML('beforeend','<label class="checkbox-label"><input name="remember_me" type="checkbox"> Remember me on this device for 30 days</label>');
+async function api(path, options={}) { const response=await fetch(path,{headers:{'Content-Type':'application/json'},...options}); const data=await response.json().catch(()=>({})); if(!response.ok){const error=Error(typeof data.detail==='string'?data.detail:'Request failed');error.detail=data.detail;throw error;} return data; }
 function formData(form) { return Object.fromEntries(new FormData(form)); }
 function show(text, error=false) { $('notice').textContent=text; $('notice').className=error?'error':''; }
+function showBookingConflict(detail) { $('notice').innerHTML=`${detail.message} Last appointment ends at <strong>${new Date(detail.last_appointment_ends_at+'Z').toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</strong>. <button id="apply-suggested-time" class="small">Reschedule time</button>`; $('notice').className='error'; $('apply-suggested-time').onclick=()=>{const start=new Date(detail.suggested_starts_at+'Z'), end=new Date(detail.suggested_ends_at+'Z'); const inputValue=value=>{const pad=n=>String(n).padStart(2,'0');return `${value.getFullYear()}-${pad(value.getMonth()+1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;}; $('booking-form').starts_at.value=inputValue(start);$('booking-form').ends_at.value=inputValue(end);$('notice').textContent='Suggested free time applied to the booking form.';}; }
+function renderNotifications(items) { $('notifications').innerHTML=items.length?items.map(item=>`<article class="notification-item"><strong>${item.message}</strong><small>Queued ${new Date(item.created_at).toLocaleString()}</small></article>`).join(''):'<p>No notifications yet.</p>'; }
 function appointmentRow(a) {
-  const fee = a.status === 'cancelled' ? ` · fee $${Number(a.cancellation_fee || 0).toFixed(2)}` : '';
+  const fee = a.status === 'cancelled' ? ` · <strong>Cancellation fee: $${Number(a.cancellation_fee || 0).toFixed(2)}</strong>` : '';
   const cancelAction = a.status === 'booked' ? ` <button data-cancel="${a.id}" class="small secondary">Cancel</button>` : '';
-  return `<p data-appointment-row="${a.id}"><strong>${new Date(a.starts_at).toLocaleString()}</strong> - ${new Date(a.ends_at).toLocaleTimeString()} · patient #${a.patient_id} · ${a.status}${fee}${cancelAction}</p>`;
+  const completeAction = a.status === 'booked' ? ` <button data-complete="${a.id}" class="small secondary">Complete</button>` : '';
+  return `<p data-appointment-row="${a.id}"><strong>${new Date(a.starts_at).toLocaleString()}</strong> - ${new Date(a.ends_at).toLocaleTimeString()} · patient #${a.patient_id} · ${a.status}${fee}${cancelAction}${completeAction}</p>`;
 }
 async function loadPeople() {
   const doctors=await api('/api/doctors');
   const patients=await api('/api/patients');
   for(const id of ['doctor-select','day-doctor']) $(id).innerHTML=doctors.items.map(d=>`<option value="${d.id}">${d.name} (${d.specialty})</option>`).join('');
   $('patient-select').innerHTML=patients.items.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  document.querySelectorAll('.doctor-options').forEach(select=>select.innerHTML=doctors.items.map(d=>`<option value="${d.id}">${d.name} (${d.specialty})</option>`).join(''));
 }
 async function loadPatients(event) {
   if(event) event.preventDefault();
-  const data=await api('/api/patients?search='+encodeURIComponent(new FormData($('search-form')).get('search')));
-  $('patient-results').innerHTML=data.items.length?data.items.map(p=>`<p><strong>${p.name}</strong><br>${p.phone||'No phone'} · ${p.email||'No email'}<br>Cancellation amount: $${Number(p.cancellation_amount||0).toFixed(2)}</p>`).join(''):'<p>No patients found.</p>';
+  const search=encodeURIComponent(new FormData($('search-form')).get('search'));
+  const [data, appointments]=await Promise.all([api('/api/patients?search='+search), api('/api/appointments?patient_name='+search)]);
+  $('patient-results').innerHTML=data.items.length?data.items.map(p=>{const matches=appointments.filter(a=>a.patient_id===p.id);const history=matches.length?`<br>Appointments: ${matches.map(a=>`${new Date(a.starts_at).toLocaleString()} (${a.status}${a.status==='cancelled'?` · Cancellation fee: $${Number(a.cancellation_fee||0).toFixed(2)}`:''})`).join(', ')}`:'';return `<p><strong>${p.name}</strong><br>${p.phone||'No phone'} · ${p.email||'No email'}<br><strong>Cancelled amount: $${Number(p.cancelled_amount||p.cancellation_amount||0).toFixed(2)}</strong>${history}</p>`;}).join(''):'<p>No patients found.</p>';
 }
 async function loadDay(event) {
   if(event) event.preventDefault();
@@ -58,6 +64,7 @@ async function refreshDashboard() {
   await loadPeople();
   await loadPatients({ preventDefault() {} });
   await loadDay({ preventDefault() {} });
+  try { renderNotifications(await api('/api/outbox')); } catch(e) { renderNotifications([]); }
 }
 async function start() {
   try {
@@ -81,11 +88,11 @@ $('booking-form').onsubmit=async e=>{
     show('Appointment booked.');
     e.target.reset();
     await refreshDashboard();
-  } catch(err){show(err.message,true);}
+  } catch(err){if(err.detail && err.detail.suggested_starts_at){showBookingConflict(err.detail);}else{show(err.message,true);}}
 };
- $('search-form').onsubmit=loadPatients; $('day-form').onsubmit=loadDay; $('refresh').onclick=refreshDashboard; $('logout').onclick=async()=>{await api('/api/auth/logout',{method:'POST'});location.reload();};
-$('set-clock').onclick=async()=>{try{const value=$('clock-time').value;if(!value) throw Error('Choose a simulated date and time first');const result=await api('/api/clock',{method:'POST',body:JSON.stringify({current_time:new Date(value).toISOString()})});$('clock-message').textContent=`Current time: ${new Date(result.current_time).toLocaleString()}`;await refreshDashboard();}catch(err){$('clock-message').textContent=err.message;}};
+$('new-patient-booking-form').onsubmit=async e=>{e.preventDefault();try{const values=formData(e.target);const patient=await api('/api/patients',{method:'POST',body:JSON.stringify({name:values.name,phone:values.phone,email:values.email})});await api('/api/appointments',{method:'POST',body:JSON.stringify({doctor_id:+values.doctor_id,patient_id:patient.id,starts_at:values.starts_at,ends_at:values.ends_at})});show('New patient created and appointment booked.');e.target.reset();await refreshDashboard();}catch(err){show(err.message,true);}};
+ $('search-form').onsubmit=loadPatients; $('day-form').onsubmit=loadDay; $('refresh').onclick=refreshDashboard; $('refresh-notifications').onclick=async()=>{try{await api('/api/notifications/run',{method:'POST'});renderNotifications(await api('/api/outbox'));}catch(err){show(err.message,true);}}; $('logout').onclick=async()=>{await api('/api/auth/logout',{method:'POST'});location.reload();};
 $('dismiss-welcome').onclick=()=>{localStorage.setItem('clinicDeskWelcomeDismissed','true'); $('welcome-card').hidden=true;};
-document.addEventListener('click',async e=>{if(e.target.dataset.cancel){try{const a=await api(`/api/appointments/${e.target.dataset.cancel}/cancel`,{method:'POST'});show(`Cancelled. Fee: $${a.cancellation_fee}`);const row=e.target.closest('[data-appointment-row]'); if(row){ row.outerHTML = appointmentRow(a); } else { await refreshDashboard(); }}catch(err){show(err.message,true);}}});
+document.addEventListener('click',async e=>{if(e.target.dataset.cancel){try{const a=await api(`/api/appointments/${e.target.dataset.cancel}/cancel`,{method:'POST'});show('Appointment cancelled.');const row=e.target.closest('[data-appointment-row]'); if(row){ row.outerHTML = appointmentRow(a); } else { await refreshDashboard(); }}catch(err){show(err.message,true);}} if(e.target.dataset.complete){try{const a=await api(`/api/appointments/${e.target.dataset.complete}/complete`,{method:'POST'});show('Appointment marked completed.');const row=e.target.closest('[data-appointment-row]');if(row) row.outerHTML=appointmentRow(a);}catch(err){show(err.message,true);}}});
 start();
 </script></body></html>
